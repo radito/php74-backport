@@ -1,0 +1,104 @@
+name: Build and publish patched PHP
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: php74-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  IMAGE: ghcr.io/${{ github.repository }}
+
+jobs:
+  build:
+    name: Build and test (${{ matrix.arch }})
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 45
+    permissions:
+      contents: read
+      packages: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: amd64
+            runner: ubuntu-24.04
+          - arch: arm64
+            runner: ubuntu-24.04-arm
+    steps:
+      - name: Check out build sources
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - name: Set up Buildx
+        uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
+      - name: Build image for testing
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
+        with:
+          context: .
+          load: true
+          tags: local/php74-backport:test
+          platforms: linux/${{ matrix.arch }}
+          cache-from: type=gha,scope=php74-${{ matrix.arch }}
+          cache-to: type=gha,mode=max,scope=php74-${{ matrix.arch }}
+          labels: org.opencontainers.image.revision=${{ github.sha }}
+      - name: Verify patched CLI and FPM behavior
+        run: python3 tests/smoke.py local/php74-backport:test
+      - name: Log in to private GHCR package
+        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Publish tested architecture image
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
+        with:
+          context: .
+          push: true
+          platforms: linux/${{ matrix.arch }}
+          tags: ${{ env.IMAGE }}:sha-${{ github.sha }}-${{ matrix.arch }}
+          cache-from: type=gha,scope=php74-${{ matrix.arch }}
+          provenance: mode=max
+          sbom: true
+          labels: org.opencontainers.image.revision=${{ github.sha }}
+
+  publish:
+    name: Publish multi-architecture tags
+    needs: build
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - name: Set up Buildx
+        uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
+      - name: Log in to GHCR
+        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Publish manifest after both architectures pass
+        env:
+          BUILD_SHA: ${{ github.sha }}
+        run: |
+          docker buildx imagetools create \
+            --tag "$IMAGE:7.4.33-fpm-alpine-backport1" \
+            --tag "$IMAGE:7.4.33-fpm-alpine" \
+            --tag "$IMAGE:sha-$BUILD_SHA" \
+            "$IMAGE:sha-$BUILD_SHA-amd64" \
+            "$IMAGE:sha-$BUILD_SHA-arm64"
+          docker buildx imagetools inspect "$IMAGE:sha-$BUILD_SHA"
+          {
+            echo '### Published patched PHP image'
+            echo "Image: \`$IMAGE:sha-$BUILD_SHA\`"
+            echo 'Architectures: linux/amd64 and linux/arm64'
+            echo 'PHP: 7.4.33; backport: 712e60f9edfd03f0960fc4fc3c2c375f42b90aa2'
+          } >> "$GITHUB_STEP_SUMMARY"

@@ -1,0 +1,9 @@
+{
+  "php_version": "7.4.33",
+  "php_sha256": "924846abf93bc613815c55dd3f5809377813ac62a9ec4eb3778675b82a27b927",
+  "backport_commit": "712e60f9edfd03f0960fc4fc3c2c375f42b90aa2",
+  "patch_sha256": "410c984e7abae9834b336cb00d3153428c7fa9b8a8527c65896ed9a72ebb01fe",
+  "docker_recipe_commit": "b9f17156020c3aef71df681b27684533529347a7",
+  "alpine_version": "3.16",
+  "status": "Emergency mitigation for an unsupported PHP branch; not a supported runtime."
+}
